@@ -308,7 +308,7 @@ class VicStatePainter:
         
         checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
         if checked_subsistence:
-            self.state_data += f'   subsistence_building = "{checked_subsistence[0]}"\n'
+            self.state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
         else:
             self.state_data += '    subsistence_building = ""\n'
         
@@ -318,7 +318,7 @@ class VicStatePainter:
             if entry is not None: 
                 value = entry.get()
                 if value:
-                    self.state_data += f"   {assignment} = \"{value}\"\n"
+                    self.state_data += f"    {assignment} = \"{value}\"\n"
 
         arable_land = self.arable_land_entry.get().strip()
         if arable_land.isdigit():
