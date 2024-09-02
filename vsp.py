@@ -430,10 +430,8 @@ class VicStatePainter:
         return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
     
     @staticmethod
-    def rgba_to_hex(rgba):
-        if len(rgba) != 4:
-            raise ValueError("Input must be a list or tuple with 4 elements.")
-        r, g, b, a = rgba   
+    def rgba_to_hex(rgb):
+        r, g, b = rgb   
         hex_color = '#{:02x}{:02x}{:02x}'.format(r, g, b)
         
         return hex_color
