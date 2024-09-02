@@ -411,8 +411,13 @@ class VicStatePainter:
             var.set(False)
             entry.delete(0, tk.END)
 
+        for entry in self.special_assignments.values():
+            if entry is not None:
+                entry.delete(0, tk.END)
+
         self.current_state_color = self.generate_random_color()
         self.color_preview.config(bg=self.current_state_color)
+        self.current_assignment = None
 
         self.update_image()
 
