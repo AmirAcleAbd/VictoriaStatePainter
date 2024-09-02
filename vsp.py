@@ -13,6 +13,7 @@ class VicStatePainter:
         self.image = None
         self.scale = 1.0
         self.state_id = 1
+        self.state_data = ""
         self.state_colors = {}
         self.all_states = []
         self.highlight_mask = None
@@ -20,7 +21,16 @@ class VicStatePainter:
         self.current_state_color = self.generate_random_color()
         self.highlighted_provinces = set()
         self.used_state_ids = set()
+
+        self.special_assignments = {"city": None, "port": None, "farn": None, "mine": None, "wood": None}
+        self.current_assignment = None
+
+        #city / port /farm /mine /wood
+        
         self.create_widgets()
+
+    def on_change(self, event):
+        self.update_provinces_text()
 
     def create_widgets(self):
         main_frame = ttk.Frame(self.root)
@@ -61,15 +71,19 @@ class VicStatePainter:
 
         self.state_id_label = ttk.Label(info_frame, text="State ID:")
         self.state_id_label.grid(row=0, column=0, padx=(10, 5), sticky="w")
-        self.state_id_entry = ttk.Entry(info_frame, width=40)
-        self.state_id_entry.grid(row=0, column=1, padx=(0, 10), pady= 10, sticky="e")
-        self.state_id_entry.bind("<KeyRelease>", self.on_state_name_change)
+
+        self.state_id_entry = ttk.Entry(info_frame, width=20)
+        self.state_id_entry.grid(row=0, column=1, padx=(0, 5), pady=10, sticky="ew")
+        self.state_id_entry.bind("<KeyRelease>", self.on_change)
+
+        self.state_id_button = ttk.Button(info_frame, text="Rand", command=self.regen_id)
+        self.state_id_button.grid(row=0, column=2, padx=(0, 10), pady=10, sticky="e")
 
         self.state_name_label = ttk.Label(info_frame, text="State Name:")
         self.state_name_label.grid(row=1, column=0, padx=(10, 5), pady= 10, sticky="w")
-        self.state_name_entry = ttk.Entry(info_frame, width=40)
+        self.state_name_entry = ttk.Entry(info_frame, width=30)
         self.state_name_entry.grid(row=1, column=1, padx=(0, 10), pady= 10, sticky="e")
-        self.state_name_entry.bind("<KeyRelease>", self.on_state_name_change)
+        self.state_name_entry.bind("<KeyRelease>", self.on_change)
 
 
         color_frame = ttk.Frame(self.left_panel)
@@ -95,6 +109,7 @@ class VicStatePainter:
         self.arable_land_label.grid(row=0, column=0, padx=(10, 5), sticky="e")
         self.arable_land_entry = ttk.Entry(arab_frame)
         self.arable_land_entry.grid(row=0, column=1, padx=(0, 10), sticky="w")
+        self.arable_land_entry.bind("<KeyRelease>", self.on_change)
 
         self.arable_resources_frame = ttk.Frame(self.left_panel)
         self.arable_resources_frame.pack(pady=(0, 10), padx=10, fill=tk.X)
@@ -125,7 +140,7 @@ class VicStatePainter:
             cb.grid(row=i, column=0, sticky="w")
             entry = ttk.Entry(self.resources_frame, width=5)
             entry.grid(row=i, column=1, padx=(0, 10))
-            entry.bind("<KeyRelease>", self.on_state_name_change)
+            entry.bind("<KeyRelease>", self.on_change)
             self.capped_resources_vars[resource] = (var, entry)
 
         self.special_resources_vars = {}
@@ -140,8 +155,18 @@ class VicStatePainter:
             cb.grid(row=i, column=2, sticky="w")
             entry = ttk.Entry(self.resources_frame, width=5)
             entry.grid(row=i, column=3, padx=(0, 10))
-            entry.bind("<KeyRelease>", self.on_state_name_change)
+            entry.bind("<KeyRelease>", self.on_change)
             self.special_resources_vars[resource] = (var, entry)
+
+        self.special_assignments_frame = ttk.Frame(self.left_panel)
+        self.special_assignments_frame.pack(pady=(0, 10), padx=5, fill=tk.X)
+
+        for i, assignment in enumerate(["city", "farm", "mine", "wood", "port"]):
+            btn = ttk.Button(self.special_assignments_frame, text=assignment.capitalize(), command=lambda a=assignment: self.set_current_assignment(a), width=8)
+            btn.grid(row=0, column=i, padx=5)
+            entry = ttk.Entry(self.special_assignments_frame, width=8)
+            entry.grid(row=1, column=i, padx=5, pady=(5, 0))
+            self.special_assignments[assignment] = entry
 
 
         self.provinces_label = ttk.Label(self.left_panel, text="Current State Configuration:")
@@ -157,10 +182,6 @@ class VicStatePainter:
                 self.subsistence_vars[key].set(False)
         self.update_provinces_text()
 
-    def on_state_name_change(self, event):
-        self.update_provinces_text()
-
-
     def choose_image(self):
         file_path = filedialog.askopenfilename(filetypes=[("PNG files", "*.png")])
         if file_path:
@@ -169,6 +190,15 @@ class VicStatePainter:
             self.scale = min(1800 / self.image.shape[1], 1200 / self.image.shape[0])
             self.highlight_mask = np.zeros(self.image.shape[:2], dtype=np.uint8)
             self.update_canvas()
+
+    def regen_id(self):       
+        new_id = 1
+        while new_id in self.used_state_ids:
+            new_id += 1
+        
+        self.state_id_entry.delete(0, tk.END)
+        self.state_id_entry.insert(0, str(new_id))
+            
 
     def update_canvas(self):
         if self.image is not None:
@@ -181,6 +211,10 @@ class VicStatePainter:
             self.canvas_image = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
             self.canvas.configure(scrollregion=self.canvas.bbox(tk.ALL))
 
+
+    def set_current_assignment(self, assignment):
+        self.current_assignment = assignment
+
     def on_click(self, event):
         if self.image is not None:  
             canvas_x = self.canvas.canvasx(event.x)
@@ -192,14 +226,39 @@ class VicStatePainter:
                 for state_id in self.used_state_ids:
                     state_color = self.state_colors.get(state_id)
                     if state_color is not None and state_color == visible_color:
-                        return    
+                        return  
+
+
                 clicked_color = self.original_image[image_y, image_x]
                 hex_code = '#{:02x}{:02x}{:02x}'.format(*clicked_color[:3])
+
+
                 if hex_code in self.highlighted_provinces:
                     self.highlighted_provinces.remove(hex_code)
+                    for key, entry in self.special_assignments.items():
+                        if entry is not None:
+                            entry_value = entry.get()
+                            if entry_value == hex_code:
+                                entry.delete(0, tk.END)
+                                self.special_assignments[key] = None
+                                break
                     self.hex_codes.remove(hex_code)
                     self.remove_highlight(image_x, image_y, clicked_color)
-                elif hex_code not in self.highlighted_provinces:
+                elif self.current_assignment:
+                    for key, entry in self.special_assignments.items():
+                        if entry is not None:
+                            entry_value = entry.get()
+                            if entry_value == hex_code:
+                                entry.delete(0, tk.END)
+                                self.special_assignments[key] = None
+                                break
+                    self.special_assignments[self.current_assignment].delete(0, tk.END)
+                    self.special_assignments[self.current_assignment].insert(0, hex_code)
+                    self.highlighted_provinces.add(hex_code)
+                    self.current_assignment = None
+                    self.hex_codes.append(hex_code)
+                    self.flood_fill(image_x, image_y, clicked_color)
+                else:
                     self.highlighted_provinces.add(hex_code)
                     self.hex_codes.append(hex_code)
                     self.flood_fill(image_x, image_y, clicked_color)
@@ -242,48 +301,56 @@ class VicStatePainter:
 
     def update_provinces_text(self):
         self.provinces_text.delete('1.0', tk.END)
-        state_data = f"STATE_{self.state_name_entry.get().upper()} = {{\n"
-        state_data += f"    id = {self.state_id_entry.get()}\n"
+        state_name = self.state_name_entry.get().strip().replace(' ', '_').upper()
+    
+        self.state_data = f"STATE_{state_name} = {{\n"
+        self.state_data += f"    id = {self.state_id_entry.get()}\n"
         
         checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
         if checked_subsistence:
-            state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
+            self.state_data += f'   subsistence_building = "{checked_subsistence[0]}"\n'
         else:
-            state_data += '    subsistence_building = ""\n'
+            self.state_data += '    subsistence_building = ""\n'
         
-        state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
+        self.state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
+
+        for assignment, entry in self.special_assignments.items():
+            if entry is not None: 
+                value = entry.get()
+                if value:
+                    self.state_data += f"   {assignment} = \"{value}\"\n"
 
         arable_land = self.arable_land_entry.get().strip()
         if arable_land.isdigit():
-            state_data += f"    arable_land = {arable_land}\n"
+            self.state_data += f"    arable_land = {arable_land}\n"
 
         arable_resources = [f'"{res}"' for res, var in self.arable_resources_vars.items() if var.get()]
         if arable_resources:
-            state_data += f"    arable_resources = {{ {' '.join(arable_resources)} }}\n"
+            self.state_data += f"    arable_resources = {{ {' '.join(arable_resources)} }}\n"
 
         capped_resources = {res: entry.get() for res, (var, entry) in self.capped_resources_vars.items() if var.get() and entry.get().strip()}
         if capped_resources:
-            state_data += "    capped_resources = {\n"
+            self.state_data += "    capped_resources = {\n"
             for res, value in capped_resources.items():
-                state_data += f"        {res} = {value}\n"
-            state_data += "    }\n"
+                self.state_data += f"        {res} = {value}\n"
+            self.state_data += "    }\n"
 
         for res, (var, entry) in self.special_resources_vars.items():
             if var.get() and entry.get().strip():
                 if res == "bg_gold_fields":
-                    state_data += f"""    resource = {{
+                    self.state_data += f"""    resource = {{
         type = "{res}"
         depleted_type = "bg_gold_mining"
         undiscovered_amount = {entry.get()}
     }}\n"""
                 else:
-                    state_data += f"""    resource = {{
+                    self.state_data += f"""    resource = {{
         type = "{res}"
         undiscovered_amount = {entry.get()}
     }}\n"""
 
-        state_data += "}\n"
-        self.provinces_text.insert(tk.END, state_data)
+        self.state_data += "}\n"
+        self.provinces_text.insert(tk.END, self.state_data)
 
     def update_image(self):
         if self.image is not None:
@@ -320,48 +387,8 @@ class VicStatePainter:
             messagebox.showerror("Error", "Arable land must be a number.")
             return
 
-        state_data = f"STATE_{state_name.upper()} = {{\n"
-        state_data += f"    id = {state_id}\n"
-        
-        # Get checked subsistence building
-        checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
-        if checked_subsistence:
-            state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
-        else:
-            state_data += '    subsistence_building = ""\n'
-        
-        state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
 
-        state_data += f"    arable_land = {arable_land}\n"
-
-        arable_resources = [f'"{res}"' for res, var in self.arable_resources_vars.items() if var.get()]
-        if arable_resources:
-            state_data += f"    arable_resources = {{ {' '.join(arable_resources)} }}\n"
-
-        capped_resources = {res: entry.get() for res, (var, entry) in self.capped_resources_vars.items() if var.get() and entry.get().strip()}
-        if capped_resources:
-            state_data += "    capped_resources = {\n"
-            for res, value in capped_resources.items():
-                state_data += f"        {res} = {value}\n"
-            state_data += "    }\n"
-
-        for res, (var, entry) in self.special_resources_vars.items():
-            if var.get() and entry.get().strip():
-                if res == "bg_gold_fields":
-                    state_data += f"""    resource = {{
-        type = "{res}"
-        depleted_type = "bg_gold_mining"
-        undiscovered_amount = {entry.get()}
-    }}\n"""
-                else:
-                    state_data += f"""    resource = {{
-        type = "{res}"
-        undiscovered_amount = {entry.get()}
-    }}\n"""
-
-        state_data += "}\n"
-
-        self.all_states.append(state_data)
+        self.all_states.append(self.state_data)
         self.used_state_ids.add(int(state_id))
 
         self.state_colors[int(state_id)] = self.current_state_color
