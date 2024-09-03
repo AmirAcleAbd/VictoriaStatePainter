@@ -9,7 +9,7 @@
 - state traits (custom)
 - naval exit IDs (and ID designation)
 - import files to display and edit
-- gpu offloading
+- multithreading / gpu parallel reduction
 - prime/impassable land
 - history file generation
 - QOL functionality (go back, change color etc.)
