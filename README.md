@@ -6,8 +6,11 @@
 ======================== it does NOT modify the original image ========================
 
 # currently missing:
--state traits
--naval exit IDs
--import state files to edit
--gpu offloading
--polish/safeguards
+- state traits (custom)
+- naval exit IDs (and ID designation)
+- import state files to edit
+- gpu offloading
+- polish/safeguards
+- prime/impassable land
+- history file generation
+- QOL functionality (go back, change color etc.)
