@@ -8,9 +8,9 @@
 # currently missing:
 - state traits (custom)
 - naval exit IDs (and ID designation)
-- import state files to edit
+- import files to display and edit
 - gpu offloading
-- polish/safeguards
 - prime/impassable land
 - history file generation
 - QOL functionality (go back, change color etc.)
+- polish/safeguards
