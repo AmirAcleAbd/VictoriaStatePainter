@@ -13,4 +13,6 @@
 - prime/impassable land
 - history file generation
 - QOL functionality (go back, change color etc.)
+- province terrains
 - polish/safeguards
+  
