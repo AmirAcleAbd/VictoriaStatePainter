@@ -11,12 +11,27 @@ class VicStatePainter:
         self.root.title("State Painter")
         self.root.geometry("1800x1000")
         self.image = None
-        self.scale = 1.0
+        self.image_array = None
+        self.original_image_array = None
+
+        self.x = 0
+        self.y = 0   
         self.state_id = 1
+        self.zoom_in = 0
+        self.max_zoom = 1
+
+        self.scale = 1
+        self.p_scale = 1
+        self.delta = 1.3
+
+        self.width = 8192
+        self.height = 3616 
+
+        self.vec = [0,0]
+
         self.state_data = ""
         self.state_colors = {}
         self.all_states = []
-        self.highlight_mask = None
         self.hex_codes = []
         self.current_state_color = self.generate_random_color()
         self.highlighted_provinces = set()
@@ -24,10 +39,278 @@ class VicStatePainter:
 
         self.special_assignments = {"city": None, "port": None, "farn": None, "mine": None, "wood": None}
         self.current_assignment = None
-
-        #city / port /farm /mine /wood
         
         self.create_widgets()
+
+    def choose_image(self):
+        file_path = filedialog.askopenfilename(filetypes=[("PNG files", "*.png")])
+        self.image = Image.open(file_path)
+        self.width, self.height = self.image.size
+        self.image_array = np.array(self.image)
+        self.original_image_array = self.image_array.copy()
+        self.update_image()
+
+    def update_image(self, event = None):
+        self.image = Image.fromarray(self.image_array)
+
+        cx = self.canvas.canvasx(0)
+        cy = self.canvas.canvasy(0)
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+
+        endx = int(cw / self.scale)
+        endy = int(ch / self.scale)
+
+        if(self.zoom_in != 0):  
+            currX = int(self.x / self.p_scale) + self.vec[0]
+            currY = int(self.y / self.p_scale) + self.vec[1]
+
+            self.vec[0] = int(currX - (self.x / self.scale))
+            self.vec[1] = int(currY - (self.y / self.scale))
+
+        self.vec[0] =  max(0, self.vec[0])
+        self.vec[1] =  max(0, self.vec[1])
+
+        ddx = (endx + self.vec[0]) - self.image.width
+        ddy = (endy + self.vec[1])  - self.image.height
+
+        if(ddx > 0):
+            self.vec[0] = self.vec[0] - ddx
+        if(ddy > 0):
+            self.vec[1] = self.vec[1] - ddy
+
+        newX = self.vec[0] + (cx / self.scale)
+        newY = self.vec[1] + (cy / self.scale)
+        visible_img = self.image.crop((newX, newY, newX + endx, newY + endy))
+        visible_img = visible_img.resize((cw, ch), Image.NEAREST)
+    
+        self.tk_image = ImageTk.PhotoImage(visible_img)
+        self.canvas.delete("all")
+        self.canvas.create_image(cx, cy, anchor="nw", image=self.tk_image)
+
+        self.canvas.configure(scrollregion=(0, 0, (self.width * self.scale), (self.height * self.scale)))
+    
+
+    def move_from(self, event):
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+        self.zoom_in = 0
+        self.canvas.scan_mark(event.x, event.y)
+
+    def move_to(self, event):
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+        self.zoom_in = 0
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        
+        self.update_image()
+
+    def wheel(self, event):
+        maxZX = self.canvas.winfo_width() / self.width
+        maxZY = self.canvas.winfo_height() / self.height
+        self.max_zoom = max(maxZX, maxZY)
+
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+
+        if event.delta:
+            self.zoom_in = event.delta
+            
+        if self.zoom_in > 0:
+            i = min(self.canvas.winfo_width(), self.canvas.winfo_height())
+            if i < self.scale: return
+            self.p_scale = self.scale
+            self.scale *= self.delta
+            self.scale = max(self.scale, self.max_zoom)
+        if self.zoom_in < 0:
+            i = min(self.width, self.height)
+            if int(i * self.scale) < 30: return 
+            self.p_scale = self.scale
+            self.scale /= self.delta
+            self.scale = max(self.scale, self.max_zoom) 
+        self.update_image()
+
+    def flood_fill(self, x, y):
+        cv2.floodFill(self.image_array, None, (x, y), self.hex_to_rgb(self.current_state_color), 
+                      loDiff=(0, 0, 0), upDiff=(0, 0, 0))
+
+    def remove_highlight(self, x, y):
+        mask = np.zeros((self.image_array.shape[0] + 2, self.image_array.shape[1] + 2), np.uint8)      
+        cv2.floodFill(self.original_image_array, mask, (x, y), (255, 255, 255), 
+                      loDiff=(0, 0, 0), upDiff=(0, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY) 
+        flood_mask = mask[1:-1, 1:-1]
+        self.image_array[flood_mask > 0] = self.original_image_array[flood_mask > 0]
+
+    def on_click(self, event):
+        if self.image_array is None:
+            return
+
+        self.zoom_in = 0
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+        image_x = int(self.x / self.scale) + self.vec[0]
+        image_y = int(self.y / self.scale) + self.vec[1]
+
+        if 0 <= image_x < self.image_array.shape[1] and 0 <= image_y < self.image_array.shape[0]:
+            visible_color = self.rgb_to_hex(self.image_array[image_y, image_x])
+            for state_id in self.used_state_ids:
+                state_color = self.state_colors.get(state_id)
+                if state_color is not None and state_color == visible_color:
+                    return  
+
+            clicked_color = self.original_image_array[image_y, image_x]
+            hex_code = '#{:02x}{:02x}{:02x}'.format(*clicked_color)
+
+
+            if hex_code in self.highlighted_provinces:
+                self.highlighted_provinces.remove(hex_code)
+                for key, entry in self.special_assignments.items():
+                    if entry is not None:
+                        entry_value = entry.get()
+                        if entry_value == hex_code:
+                            entry.delete(0, tk.END)
+                            self.special_assignments[key] = None
+                            break
+                self.hex_codes.remove(hex_code)
+                self.remove_highlight(image_x, image_y)
+            elif self.current_assignment:
+                for key, entry in self.special_assignments.items():
+                    if entry is not None:
+                        entry_value = entry.get()
+                        if entry_value == hex_code:
+                            entry.delete(0, tk.END)
+                            self.special_assignments[key] = None
+                            break
+                self.special_assignments[self.current_assignment].delete(0, tk.END)
+                self.special_assignments[self.current_assignment].insert(0, hex_code)
+                self.highlighted_provinces.add(hex_code)
+                self.current_assignment = None
+                self.hex_codes.append(hex_code)
+                self.flood_fill(image_x, image_y)
+            else:
+                self.highlighted_provinces.add(hex_code)
+                self.hex_codes.append(hex_code)
+                self.flood_fill(image_x, image_y)
+
+            self.update_provinces_text()
+            self.update_image()
+
+    def scroll_y(self, *args, **kwargs):
+        self.canvas.yview(*args, **kwargs) 
+        self.update_image() 
+
+    def scroll_x(self, *args, **kwargs):
+        self.canvas.xview(*args, **kwargs) 
+        self.update_image() 
+
+    def save_state(self):
+        state_name = self.state_name_entry.get().strip()
+        if not state_name:
+            messagebox.showerror("Error", "Please enter a state name.")
+            return
+
+        state_id = self.state_id_entry.get().strip()
+        if not state_id.isdigit() or int(state_id) in self.used_state_ids:
+            messagebox.showerror("Error", "State ID must be a unique number.")
+            return
+
+        arable_land = self.arable_land_entry.get().strip()
+        if not arable_land.isdigit():
+            messagebox.showerror("Error", "Arable land must be a number.")
+            return
+
+        self.all_states.append(self.state_data)
+        self.used_state_ids.add(int(state_id))
+
+        self.state_colors[int(state_id)] = self.current_state_color
+
+        self.hex_codes = []
+        self.highlighted_provinces = set()
+
+        self.provinces_text.delete('1.0', tk.END)
+        self.state_name_entry.delete(0, tk.END)
+        self.state_id_entry.delete(0, tk.END)
+        self.arable_land_entry.delete(0, tk.END)
+        for var in self.subsistence_vars.values():
+            var.set(False)
+        for var in self.arable_resources_vars.values():
+            var.set(False)
+        for var, entry in self.capped_resources_vars.values():
+            var.set(False)
+            entry.delete(0, tk.END)
+        for var, entry in self.special_resources_vars.values():
+            var.set(False)
+            entry.delete(0, tk.END)
+
+        for entry in self.special_assignments.values():
+            if entry is not None:
+                entry.delete(0, tk.END)
+
+        self.current_state_color = self.generate_random_color()
+        self.color_preview.config(bg=self.current_state_color)
+        self.current_assignment = None
+
+        self.update_image()
+ 
+    def update_provinces_text(self):
+        self.provinces_text.delete('1.0', tk.END)
+        state_name = self.state_name_entry.get().strip().replace(' ', '_').upper()
+    
+        self.state_data = f"STATE_{state_name} = {{\n"
+        self.state_data += f"    id = {self.state_id_entry.get()}\n"
+        
+        checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
+        if checked_subsistence:
+            self.state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
+        else:
+            self.state_data += '    subsistence_building = ""\n'
+        
+        self.state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
+
+        for assignment, entry in self.special_assignments.items():
+            if entry is not None: 
+                value = entry.get()
+                if value:
+                    self.state_data += f"    {assignment} = \"{value}\"\n"
+
+        arable_land = self.arable_land_entry.get().strip()
+        if arable_land.isdigit():
+            self.state_data += f"    arable_land = {arable_land}\n"
+
+        arable_resources = [f'"{res}"' for res, var in self.arable_resources_vars.items() if var.get()]
+        if arable_resources:
+            self.state_data += f"    arable_resources = {{ {' '.join(arable_resources)} }}\n"
+
+        capped_resources = {res: entry.get() for res, (var, entry) in self.capped_resources_vars.items() if var.get() and entry.get().strip()}
+        if capped_resources:
+            self.state_data += "    capped_resources = {\n"
+            for res, value in capped_resources.items():
+                self.state_data += f"        {res} = {value}\n"
+            self.state_data += "    }\n"
+
+        for res, (var, entry) in self.special_resources_vars.items():
+            if var.get() and entry.get().strip():
+                if res == "bg_gold_fields":
+                    self.state_data += f"""    resource = {{
+        type = "{res}"
+        depleted_type = "bg_gold_mining"
+        undiscovered_amount = {entry.get()}
+    }}\n"""
+                else:
+                    self.state_data += f"""    resource = {{
+        type = "{res}"
+        undiscovered_amount = {entry.get()}
+    }}\n"""
+
+        self.state_data += "}\n"
+        self.provinces_text.insert(tk.END, self.state_data)
+
+    def on_subsistence_change(self):
+        checked = [key for key, var in self.subsistence_vars.items() if var.get()]
+        if len(checked) > 1:
+            for key in checked[1:]:
+                self.subsistence_vars[key].set(False)
+        self.update_provinces_text()
 
     def on_change(self, event):
         self.update_provinces_text()
@@ -39,19 +322,26 @@ class VicStatePainter:
         self.right_panel = ttk.Frame(main_frame, width=400)
         self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Canvas(self.right_panel, bg="white")
-        self.canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.right_panel.grid_rowconfigure(0, weight=1)
+        self.right_panel.grid_columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.right_panel, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky='nswe')
 
         self.x_scrollbar = ttk.Scrollbar(self.right_panel, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        self.x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.x_scrollbar.grid(row=1, column=0, sticky='ew')
         self.y_scrollbar = ttk.Scrollbar(self.right_panel, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.y_scrollbar.grid(row=0, column=1, sticky='ns')
 
         self.canvas.configure(xscrollcommand=self.x_scrollbar.set, yscrollcommand=self.y_scrollbar.set)
+
+        #self.container = self.canvas.create_rectangle(0, 0, 8192, 3616, width=0)
+        self.canvas.update()  
+
         self.canvas.bind("<Button-1>", self.on_click)
-        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
-        self.canvas.bind("<Button-3>", self.on_right_click)
-        self.canvas.bind("<B3-Motion>", self.on_right_click_drag)
+        self.canvas.bind('<ButtonPress-3>', self.move_from)
+        self.canvas.bind('<B3-Motion>',     self.move_to)
+        self.canvas.bind('<MouseWheel>', self.wheel)
 
         self.left_panel = ttk.Frame(main_frame, width=400)
         self.left_panel.pack(side=tk.LEFT, fill=tk.Y)
@@ -175,253 +465,6 @@ class VicStatePainter:
         self.provinces_text = tk.Text(self.left_panel, height=10, wrap=tk.WORD)
         self.provinces_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-    def on_subsistence_change(self):
-        checked = [key for key, var in self.subsistence_vars.items() if var.get()]
-        if len(checked) > 1:
-            for key in checked[1:]:
-                self.subsistence_vars[key].set(False)
-        self.update_provinces_text()
-
-    def choose_image(self):
-        file_path = filedialog.askopenfilename(filetypes=[("PNG files", "*.png")])
-        if file_path:
-            self.image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-            self.original_image = self.image.copy()
-            self.scale = min(1800 / self.image.shape[1], 1200 / self.image.shape[0])
-            self.highlight_mask = np.zeros(self.image.shape[:2], dtype=np.uint8)
-            self.update_canvas()
-
-    def regen_id(self):       
-        new_id = 1
-        while new_id in self.used_state_ids:
-            new_id += 1
-        
-        self.state_id_entry.delete(0, tk.END)
-        self.state_id_entry.insert(0, str(new_id))
-            
-
-    def update_canvas(self):
-        if self.image is not None:
-            width = int(self.image.shape[1] * self.scale)
-            height = int(self.image.shape[0] * self.scale)
-            resized_image = cv2.resize(self.image, (width, height), interpolation=cv2.INTER_LANCZOS4)
-            resized_image_rgb = cv2.cvtColor(resized_image, cv2.COLOR_BGRA2RGB) if resized_image.shape[2] == 4 else cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
-            self.photo = ImageTk.PhotoImage(image=Image.fromarray(resized_image_rgb))
-            self.canvas.delete("all")
-            self.canvas_image = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-            self.canvas.configure(scrollregion=self.canvas.bbox(tk.ALL))
-
-
-    def set_current_assignment(self, assignment):
-        self.current_assignment = assignment
-
-    def on_click(self, event):
-        if self.image is not None:  
-            canvas_x = self.canvas.canvasx(event.x)
-            canvas_y = self.canvas.canvasy(event.y)
-            image_x = int(canvas_x / self.scale)
-            image_y = int(canvas_y / self.scale)
-            if 0 <= image_x < self.image.shape[1] and 0 <= image_y < self.image.shape[0]:
-                visible_color = self.rgba_to_hex(self.image[image_y, image_x])
-                for state_id in self.used_state_ids:
-                    state_color = self.state_colors.get(state_id)
-                    if state_color is not None and state_color == visible_color:
-                        return  
-
-
-                clicked_color = self.original_image[image_y, image_x]
-                hex_code = '#{:02x}{:02x}{:02x}'.format(*clicked_color[:3])
-
-
-                if hex_code in self.highlighted_provinces:
-                    self.highlighted_provinces.remove(hex_code)
-                    for key, entry in self.special_assignments.items():
-                        if entry is not None:
-                            entry_value = entry.get()
-                            if entry_value == hex_code:
-                                entry.delete(0, tk.END)
-                                self.special_assignments[key] = None
-                                break
-                    self.hex_codes.remove(hex_code)
-                    self.remove_highlight(image_x, image_y, clicked_color)
-                elif self.current_assignment:
-                    for key, entry in self.special_assignments.items():
-                        if entry is not None:
-                            entry_value = entry.get()
-                            if entry_value == hex_code:
-                                entry.delete(0, tk.END)
-                                self.special_assignments[key] = None
-                                break
-                    self.special_assignments[self.current_assignment].delete(0, tk.END)
-                    self.special_assignments[self.current_assignment].insert(0, hex_code)
-                    self.highlighted_provinces.add(hex_code)
-                    self.current_assignment = None
-                    self.hex_codes.append(hex_code)
-                    self.flood_fill(image_x, image_y, clicked_color)
-                else:
-                    self.highlighted_provinces.add(hex_code)
-                    self.hex_codes.append(hex_code)
-                    self.flood_fill(image_x, image_y, clicked_color)
-                self.update_provinces_text()
-                self.update_image()
-
-    def flood_fill(self, x, y, target_color):
-        img_copy = self.image[:, :, :3].copy()  
-        mask = np.zeros((img_copy.shape[0] + 2, img_copy.shape[1] + 2), np.uint8)   
-        cv2.floodFill(img_copy, mask, (x, y), (255, 255, 255), loDiff=(0, 0, 0), upDiff=(0, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY)
-        
-        flood_mask = mask[1:-1, 1:-1]
-        if flood_mask.ndim == 3:
-            flood_mask = cv2.cvtColor(flood_mask, cv2.COLOR_BGR2GRAY)
-        
-        flood_mask_resized = cv2.resize(flood_mask, (self.image.shape[1], self.image.shape[0]), interpolation=cv2.INTER_NEAREST)
-        
-        color_rgb = np.array(self.hex_to_rgb(self.current_state_color))
-        if self.image.shape[2] == 4:
-            color_rgb = np.append(color_rgb, 255)  
-        
-        self.image[flood_mask_resized > 0] = color_rgb
-        self.highlight_mask = np.zeros(self.image.shape[:2], dtype=np.uint8)
-
-
-    def remove_highlight(self, x, y, target_color):
-        img_copy = self.original_image[:, :, :3].copy()   
-        mask = np.zeros((img_copy.shape[0] + 2, img_copy.shape[1] + 2), np.uint8)      
-        cv2.floodFill(img_copy, mask, (x, y), (255, 255, 255), loDiff=(0, 0, 0), upDiff=(0, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY)
-        
-        flood_mask = mask[1:-1, 1:-1]
-        if flood_mask.ndim == 3:
-            flood_mask = cv2.cvtColor(flood_mask, cv2.COLOR_BGR2GRAY)
-        
-        flood_mask_resized = cv2.resize(flood_mask, (self.image.shape[1], self.image.shape[0]), interpolation=cv2.INTER_NEAREST) 
-        original_image_resized = cv2.resize(self.original_image, (self.image.shape[1], self.image.shape[0]), interpolation=cv2.INTER_NEAREST)
-        self.image[flood_mask_resized > 0] = original_image_resized[flood_mask_resized > 0]
-        self.highlight_mask = np.zeros(self.image.shape[:2], dtype=np.uint8)
-
-
-    def update_provinces_text(self):
-        self.provinces_text.delete('1.0', tk.END)
-        state_name = self.state_name_entry.get().strip().replace(' ', '_').upper()
-    
-        self.state_data = f"STATE_{state_name} = {{\n"
-        self.state_data += f"    id = {self.state_id_entry.get()}\n"
-        
-        checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
-        if checked_subsistence:
-            self.state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
-        else:
-            self.state_data += '    subsistence_building = ""\n'
-        
-        self.state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
-
-        for assignment, entry in self.special_assignments.items():
-            if entry is not None: 
-                value = entry.get()
-                if value:
-                    self.state_data += f"    {assignment} = \"{value}\"\n"
-
-        arable_land = self.arable_land_entry.get().strip()
-        if arable_land.isdigit():
-            self.state_data += f"    arable_land = {arable_land}\n"
-
-        arable_resources = [f'"{res}"' for res, var in self.arable_resources_vars.items() if var.get()]
-        if arable_resources:
-            self.state_data += f"    arable_resources = {{ {' '.join(arable_resources)} }}\n"
-
-        capped_resources = {res: entry.get() for res, (var, entry) in self.capped_resources_vars.items() if var.get() and entry.get().strip()}
-        if capped_resources:
-            self.state_data += "    capped_resources = {\n"
-            for res, value in capped_resources.items():
-                self.state_data += f"        {res} = {value}\n"
-            self.state_data += "    }\n"
-
-        for res, (var, entry) in self.special_resources_vars.items():
-            if var.get() and entry.get().strip():
-                if res == "bg_gold_fields":
-                    self.state_data += f"""    resource = {{
-        type = "{res}"
-        depleted_type = "bg_gold_mining"
-        undiscovered_amount = {entry.get()}
-    }}\n"""
-                else:
-                    self.state_data += f"""    resource = {{
-        type = "{res}"
-        undiscovered_amount = {entry.get()}
-    }}\n"""
-
-        self.state_data += "}\n"
-        self.provinces_text.insert(tk.END, self.state_data)
-
-    def update_image(self):
-        if self.image is not None:
-            width = int(self.image.shape[1] * self.scale)
-            height = int(self.image.shape[0] * self.scale)
-            resized_image = cv2.resize(self.image, (width, height), interpolation=cv2.INTER_LANCZOS4)
-            resized_image_rgb = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB) if resized_image.shape[2] == 3 else cv2.cvtColor(resized_image, cv2.COLOR_BGRA2RGB)
-            self.photo = ImageTk.PhotoImage(image=Image.fromarray(resized_image_rgb))
-            self.canvas.delete("all")
-            self.canvas_image = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-            self.canvas.configure(scrollregion=self.canvas.bbox(tk.ALL))
-
-
-    def generate_random_color(self):
-        while True:
-            color = "#{:06x}".format(random.randint(0, 0xFFFFFF))
-            if color not in self.state_colors.values():
-                return color
-
-
-    def save_state(self):
-        state_name = self.state_name_entry.get().strip()
-        if not state_name:
-            messagebox.showerror("Error", "Please enter a state name.")
-            return
-
-        state_id = self.state_id_entry.get().strip()
-        if not state_id.isdigit() or int(state_id) in self.used_state_ids:
-            messagebox.showerror("Error", "State ID must be a unique number.")
-            return
-
-        arable_land = self.arable_land_entry.get().strip()
-        if not arable_land.isdigit():
-            messagebox.showerror("Error", "Arable land must be a number.")
-            return
-
-
-        self.all_states.append(self.state_data)
-        self.used_state_ids.add(int(state_id))
-
-        self.state_colors[int(state_id)] = self.current_state_color
-
-        self.hex_codes = []
-        self.highlighted_provinces = set()
-
-        self.provinces_text.delete('1.0', tk.END)
-        self.state_name_entry.delete(0, tk.END)
-        self.state_id_entry.delete(0, tk.END)
-        self.arable_land_entry.delete(0, tk.END)
-        for var in self.subsistence_vars.values():
-            var.set(False)
-        for var in self.arable_resources_vars.values():
-            var.set(False)
-        for var, entry in self.capped_resources_vars.values():
-            var.set(False)
-            entry.delete(0, tk.END)
-        for var, entry in self.special_resources_vars.values():
-            var.set(False)
-            entry.delete(0, tk.END)
-
-        for entry in self.special_assignments.values():
-            if entry is not None:
-                entry.delete(0, tk.END)
-
-        self.current_state_color = self.generate_random_color()
-        self.color_preview.config(bg=self.current_state_color)
-        self.current_assignment = None
-
-        self.update_image()
-
-
 
     def export_all_states(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt")])
@@ -430,29 +473,33 @@ class VicStatePainter:
                 for state_data in self.all_states:
                     f.write(state_data + '\n')
 
+    def generate_random_color(self):
+        while True:
+            color = "#{:06x}".format(random.randint(0, 0xFFFFFF))
+            if color not in self.state_colors.values():
+                return color
+
     @staticmethod
     def hex_to_rgb(hex_color):
         return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
     
     @staticmethod
-    def rgba_to_hex(rgb):
+    def rgb_to_hex(rgb):
         r, g, b = rgb   
         hex_color = '#{:02x}{:02x}{:02x}'.format(r, g, b)
         
         return hex_color
+    
+    def regen_id(self):       
+        new_id = 1
+        while new_id in self.used_state_ids:
+            new_id += 1
+        
+        self.state_id_entry.delete(0, tk.END)
+        self.state_id_entry.insert(0, str(new_id))
 
-
-    def on_mouse_wheel(self, event):
-        if self.image is not None:
-            scale_factor = 1.1 if event.delta > 0 else 0.9
-            self.scale *= scale_factor
-            self.update_image()
-
-    def on_right_click(self, event):
-        self.canvas.scan_mark(event.x, event.y)
-
-    def on_right_click_drag(self, event):
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+    def set_current_assignment(self, assignment):
+        self.current_assignment = assignment
 
 if __name__ == "__main__":
     root = tk.Tk()
