@@ -13,4 +13,5 @@
 - history file generation
 - QOL functionality (go back, change color etc.)
 - province terrains
+- mass highlight / select functionality
   
