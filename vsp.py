@@ -19,6 +19,7 @@ class VicStatePainter:
         self.state_id = 1
         self.zoom_in = 0
         self.max_zoom = 1
+        self.click = False
 
         self.scale = 1
         self.p_scale = 1
@@ -51,15 +52,10 @@ class VicStatePainter:
         self.update_image()
 
     def update_image(self, event = None):
-        self.image = Image.fromarray(self.image_array)
 
-        cx = self.canvas.canvasx(0)
-        cy = self.canvas.canvasy(0)
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
-
-        endx = int(cw / self.scale)
-        endy = int(ch / self.scale)
+        cx, cy = self.canvas.canvasx(0), self.canvas.canvasy(0)
+        cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
+        endx, endy = int(cw / self.scale), int(ch / self.scale)
 
         if(self.zoom_in != 0):  
             currX = int(self.x / self.p_scale) + self.vec[0]
@@ -67,6 +63,8 @@ class VicStatePainter:
 
             self.vec[0] = int(currX - (self.x / self.scale))
             self.vec[1] = int(currY - (self.y / self.scale))
+        if(self.click):
+            self.image = Image.fromarray(self.image_array)
 
         self.vec[0] =  max(0, self.vec[0])
         self.vec[1] =  max(0, self.vec[1])
@@ -88,47 +86,8 @@ class VicStatePainter:
         self.canvas.delete("all")
         self.canvas.create_image(cx, cy, anchor="nw", image=self.tk_image)
 
-        self.canvas.configure(scrollregion=(0, 0, (self.width * self.scale), (self.height * self.scale)))
-    
-
-    def move_from(self, event):
-        self.x = self.canvas.canvasx(event.x)
-        self.y = self.canvas.canvasy(event.y)
-        self.zoom_in = 0
-        self.canvas.scan_mark(event.x, event.y)
-
-    def move_to(self, event):
-        self.x = self.canvas.canvasx(event.x)
-        self.y = self.canvas.canvasy(event.y)
-        self.zoom_in = 0
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        self.canvas.configure(scrollregion=(-cw, -ch, (self.width * self.scale), (self.height * self.scale)))
         
-        self.update_image()
-
-    def wheel(self, event):
-        maxZX = self.canvas.winfo_width() / self.width
-        maxZY = self.canvas.winfo_height() / self.height
-        self.max_zoom = max(maxZX, maxZY)
-
-        self.x = self.canvas.canvasx(event.x)
-        self.y = self.canvas.canvasy(event.y)
-
-        if event.delta:
-            self.zoom_in = event.delta
-            
-        if self.zoom_in > 0:
-            i = min(self.canvas.winfo_width(), self.canvas.winfo_height())
-            if i < self.scale: return
-            self.p_scale = self.scale
-            self.scale *= self.delta
-            self.scale = max(self.scale, self.max_zoom)
-        if self.zoom_in < 0:
-            i = min(self.width, self.height)
-            if int(i * self.scale) < 30: return 
-            self.p_scale = self.scale
-            self.scale /= self.delta
-            self.scale = max(self.scale, self.max_zoom) 
-        self.update_image()
 
     def flood_fill(self, x, y):
         cv2.floodFill(self.image_array, None, (x, y), self.hex_to_rgb(self.current_state_color), 
@@ -142,8 +101,7 @@ class VicStatePainter:
         self.image_array[flood_mask > 0] = self.original_image_array[flood_mask > 0]
 
     def on_click(self, event):
-        if self.image_array is None:
-            return
+        self.click = True
 
         self.zoom_in = 0
         self.x = self.canvas.canvasx(event.x)
@@ -195,6 +153,36 @@ class VicStatePainter:
             self.update_provinces_text()
             self.update_image()
 
+    def move_from(self, event):
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+        self.zoom_in = 0
+        self.click = False
+        self.canvas.scan_mark(event.x, event.y)
+
+    def move_to(self, event):
+        self.x = self.canvas.canvasx(event.x)
+        self.y = self.canvas.canvasy(event.y)
+        self.zoom_in = 0
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        
+        self.update_image()
+
+    def wheel(self, event):
+        self.click = False
+        self.max_zoom = max(self.canvas.winfo_width() / self.width, self.canvas.winfo_height() / self.height)
+
+        self.x, self.y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        self.zoom_in = event.delta if event.delta else 0
+
+        if self.zoom_in != 0:
+            self.p_scale = self.scale
+            self.scale *= self.delta if self.zoom_in > 0 else 1/self.delta
+            self.scale = max(self.scale, self.max_zoom)
+            self.scale = min(self.scale, max(self.canvas.winfo_width(), self.canvas.winfo_height()))
+
+        self.update_image()
+        
     def scroll_y(self, *args, **kwargs):
         self.canvas.yview(*args, **kwargs) 
         self.update_image() 
@@ -251,7 +239,7 @@ class VicStatePainter:
         self.current_assignment = None
 
         self.update_image()
- 
+
     def update_provinces_text(self):
         self.provinces_text.delete('1.0', tk.END)
         state_name = self.state_name_entry.get().strip().replace(' ', '_').upper()
@@ -260,18 +248,13 @@ class VicStatePainter:
         self.state_data += f"    id = {self.state_id_entry.get()}\n"
         
         checked_subsistence = [label for label, var in self.subsistence_vars.items() if var.get()]
-        if checked_subsistence:
-            self.state_data += f'    subsistence_building = "{checked_subsistence[0]}"\n'
-        else:
-            self.state_data += '    subsistence_building = ""\n'
+        self.state_data += f'    subsistence_building = "{checked_subsistence[0] if checked_subsistence else ""}"\n'
         
         self.state_data += f"    provinces = {{ {' '.join(f'\"{code}\"' for code in self.hex_codes)} }}\n"
 
         for assignment, entry in self.special_assignments.items():
-            if entry is not None: 
-                value = entry.get()
-                if value:
-                    self.state_data += f"    {assignment} = \"{value}\"\n"
+            if entry is not None and entry.get():
+                self.state_data += f"    {assignment} = \"{entry.get()}\"\n"
 
         arable_land = self.arable_land_entry.get().strip()
         if arable_land.isdigit():
@@ -290,15 +273,10 @@ class VicStatePainter:
 
         for res, (var, entry) in self.special_resources_vars.items():
             if var.get() and entry.get().strip():
-                if res == "bg_gold_fields":
-                    self.state_data += f"""    resource = {{
+                resource_type = "bg_gold_mining" if res == "bg_gold_fields" else res
+                self.state_data += f"""    resource = {{
         type = "{res}"
-        depleted_type = "bg_gold_mining"
-        undiscovered_amount = {entry.get()}
-    }}\n"""
-                else:
-                    self.state_data += f"""    resource = {{
-        type = "{res}"
+        {"depleted_type = \"bg_gold_mining\"" if res == "bg_gold_fields" else ""}
         undiscovered_amount = {entry.get()}
     }}\n"""
 
@@ -347,7 +325,24 @@ class VicStatePainter:
         self.left_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.left_panel.pack_propagate(False)
 
-        button_frame = ttk.Frame(self.left_panel)
+        self.notebook = ttk.Notebook(self.left_panel)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # Create tabs
+        self.state_tab = ttk.Frame(self.notebook)
+        self.history_tab = ttk.Frame(self.notebook)
+        self.terrain_tab = ttk.Frame(self.notebook)
+        self.settings_tab = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.state_tab, text='State Tab')
+        self.notebook.add(self.history_tab, text='Histroy Tab')
+        self.notebook.add(self.terrain_tab, text='Terreain Tab')
+        self.notebook.add(self.settings_tab, text='Settings')
+
+        # Add content to Tab 1 (3 buttons on top)
+        button_frame = ttk.Frame(self.state_tab)
+
+        button_frame = ttk.Frame(self.state_tab)
         button_frame.pack(pady=10)
         self.pick_button = ttk.Button(button_frame, text="Pick PNG", command=self.choose_image)
         self.save_button = ttk.Button(button_frame, text="Save State", command=self.save_state)
@@ -356,7 +351,11 @@ class VicStatePainter:
         self.save_button.pack(side=tk.LEFT, padx=5)
         self.export_button.pack(side=tk.LEFT, padx=5)
 
-        info_frame = ttk.Frame(self.left_panel)
+        self.create_state_tab()
+
+
+    def create_state_tab(self):
+        info_frame = ttk.Frame(self.state_tab)
         info_frame.pack(pady=10, fill=tk.X)
 
         self.state_id_label = ttk.Label(info_frame, text="State ID:")
@@ -375,8 +374,7 @@ class VicStatePainter:
         self.state_name_entry.grid(row=1, column=1, padx=(0, 10), pady= 10, sticky="e")
         self.state_name_entry.bind("<KeyRelease>", self.on_change)
 
-
-        color_frame = ttk.Frame(self.left_panel)
+        color_frame = ttk.Frame(self.state_tab)
         color_frame.pack(pady=(10, 0), padx=10, fill=tk.X)
 
         self.color_preview = tk.Canvas(color_frame, width=47, height=50, bg=self.current_state_color)
@@ -392,7 +390,7 @@ class VicStatePainter:
             cb = ttk.Checkbutton(color_frame, text=label, variable=var, command=self.on_subsistence_change)
             cb.grid(row=i, column=1, sticky="w")
 
-        arab_frame = ttk.Frame(self.left_panel)
+        arab_frame = ttk.Frame(self.state_tab)
         arab_frame.pack(padx=30, fill=tk.X)
 
         self.arable_land_label = ttk.Label(arab_frame, text="Arable Land:")
@@ -401,7 +399,7 @@ class VicStatePainter:
         self.arable_land_entry.grid(row=0, column=1, padx=(0, 10), sticky="w")
         self.arable_land_entry.bind("<KeyRelease>", self.on_change)
 
-        self.arable_resources_frame = ttk.Frame(self.left_panel)
+        self.arable_resources_frame = ttk.Frame(self.state_tab)
         self.arable_resources_frame.pack(pady=(0, 10), padx=10, fill=tk.X)
         self.arable_resources_vars = {}
         arable_resources = [
@@ -416,7 +414,7 @@ class VicStatePainter:
             cb.grid(row=i // 2, column=i % 2, sticky="w")
             self.arable_resources_vars[resource] = var
 
-        self.resources_frame = ttk.Frame(self.left_panel)
+        self.resources_frame = ttk.Frame(self.state_tab)
         self.resources_frame.pack(pady=(0, 10), padx=10, fill=tk.X)
 
         self.capped_resources_vars = {}
@@ -448,7 +446,7 @@ class VicStatePainter:
             entry.bind("<KeyRelease>", self.on_change)
             self.special_resources_vars[resource] = (var, entry)
 
-        self.special_assignments_frame = ttk.Frame(self.left_panel)
+        self.special_assignments_frame = ttk.Frame(self.state_tab)
         self.special_assignments_frame.pack(pady=(0, 10), padx=5, fill=tk.X)
 
         for i, assignment in enumerate(["city", "farm", "mine", "wood", "port"]):
@@ -459,10 +457,10 @@ class VicStatePainter:
             self.special_assignments[assignment] = entry
 
 
-        self.provinces_label = ttk.Label(self.left_panel, text="Current State Configuration:")
+        self.provinces_label = ttk.Label(self.state_tab, text="Current State Configuration:")
         self.provinces_label.pack(pady=(10, 0))
 
-        self.provinces_text = tk.Text(self.left_panel, height=10, wrap=tk.WORD)
+        self.provinces_text = tk.Text(self.state_tab, height=10, wrap=tk.WORD)
         self.provinces_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
 
